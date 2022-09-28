@@ -4,6 +4,7 @@ import rospy
 import json
 import metrics_refbox_msgs.msg
 from sensor_msgs.msg import Image
+import random
 from metrics_refbox_msgs.msg import Command
 from metrics_refbox_msgs.msg import Command
 from metrics_refbox_msgs.msg import ObjectDetectionResult, PersonDetectionResult, ActivityRecognitionResult
@@ -28,7 +29,8 @@ class RefboxClientListener(object):
         rospy.Subscriber("/locobot/camera/color/image_raw", Image, self.update_image)
         self.publishers = {
             "person": rospy.Publisher("metrics_refbox_client/person_detection_result", PersonDetectionResult, queue_size=10),
-            "object": rospy.Publisher("metrics_refbox_client/object_detection_result", ObjectDetectionResult, queue_size=10)
+            "object": rospy.Publisher("metrics_refbox_client/object_detection_result", ObjectDetectionResult, queue_size=10),
+            "gesture": rospy.Publisher("metrics_refbox_client/gesture_recognition_result", GestureRecognitionResult, queue_size=10)
         }
         self.requested_person = False
         self.requested_object = False
@@ -100,7 +102,12 @@ class RefboxClientListener(object):
         th.join()
 
     def send_gesture_recognition_result(self):
-
+        print("Received gresture request")
+        self.res = GestureRecognitionResult()
+        self.res.message_type = self.res.RESULT
+        self.res.gestures = random.sample(["nodding", "pointing", "pull_hand_in_call_someone", "shaking_head", "stop_sign", "thumbs_down", "thumbs_up", "wave_someone_away", "waving_hand"], 2)
+        time.sleep(random.uniform(0.5,5))
+        self.publishers["gesture"].publish(self.res)
 
     def timeout_person(self):
         st = time.time()
