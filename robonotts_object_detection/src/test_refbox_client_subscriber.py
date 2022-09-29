@@ -16,29 +16,33 @@ import threading
 
 class RefboxClientListener(object):
     person_box = BoundingBox2D()
-    res = None
-    ready_to_pub = False
-    image_saved = Image()
+    result_msg = None # The message to be sent back to the refBox
+    ready_to_pub = False 
+    image_saved = Image() # The currently saved Image
     object_classes = ["cup", "bowl", "bottle", "toothbrush", "book"]
 
+    
+    # Initialises the node, and subscribes to the needed topics
     def __init__(self):
-        rospy.init_node('refbox_client_listener')
-        rospy.Subscriber("/metrics_refbox_client/command", metrics_refbox_msgs.msg.Command, self.handle_command)
-        rospy.Subscriber("/darknet_ros/bounding_boxes", BoundingBoxes, self.update_bounding_boxes)
-        rospy.Subscriber("/locobot/camera/color/image_raw", Image, self.update_image)
+        rospy.init_node('refbox_client_listener') 
+        rospy.Subscriber("/metrics_refbox_client/command", metrics_refbox_msgs.msg.Command, self.handle_command) # Refbox Commands
+        rospy.Subscriber("/darknet_ros/bounding_boxes", BoundingBoxes, self.update_bounding_boxes) # Bounding boxes from Darknet
+        rospy.Subscriber("/locobot/camera/color/image_raw", Image, self.update_image) # Bucky's Camera
         self.publishers = {
+            # Set up publishers for our results.
             "person": rospy.Publisher("metrics_refbox_client/person_detection_result", PersonDetectionResult, queue_size=10),
             "object": rospy.Publisher("metrics_refbox_client/object_detection_result", ObjectDetectionResult, queue_size=10),
             "gesture": rospy.Publisher("metrics_refbox_client/gesture_recognition_result", GestureRecognitionResult, queue_size=10)
         }
         self.requested_person = False
         self.requested_object = False
-        rospy.spin()
+        rospy.spin() # Keeps the python node from terminating until it is closed by ROS
     
+    #Updates the currently stored image.
     def update_image(self, msg):
         if self.ready_to_pub:
-            self.res.image = self.image_saved
-            self.publishers[self.pub_type].publish(self.res)
+            self.result_msg.image = self.image_saved
+            self.publishers[self.pub_type].publish(self.result_msg)
             self.ready_to_pub = False
         else:
             self.image_saved = msg
@@ -47,27 +51,27 @@ class RefboxClientListener(object):
         for b in msg.bounding_boxes:
             if b.Class == "person" and b.probability >= 0.6 and self.requested_person:
                 print(f"Found a person with {b.probability} certainty")
-                self.res = PersonDetectionResult()
-                self.res.message_type = self.res.RESULT
-                self.res.person_found = True
-                self.res.box2d.min_x = b.xmin
-                self.res.box2d.min_y = b.ymin
-                self.res.box2d.max_x = b.xmax
-                self.res.box2d.max_y = b.ymax
+                self.result_msg = PersonDetectionResult()
+                self.result_msg.message_type = self.result_msg.RESULT
+                self.result_msg.person_found = True
+                self.result_msg.box2d.min_x = b.xmin
+                self.result_msg.box2d.min_y = b.ymin
+                self.result_msg.box2d.max_x = b.xmax
+                self.result_msg.box2d.max_y = b.ymax
                 self.ready_to_pub = True
                 self.pub_type = "person"
                 self.requested_person = False
                 break
             if self.requested_object and b.Class == self.search_object:
                 print(f"Found a {b.Class} with {b.probability} certainty")
-                self.res = ObjectDetectionResult()
-                self.res.message_type = self.res.RESULT
-                self.res.object_found = True
-                self.res.result_type = 1 # 2d bounding box
-                self.res.box2d.min_x = b.xmin
-                self.res.box2d.min_y = b.ymin
-                self.res.box2d.max_x = b.xmax
-                self.res.box2d.max_y = b.ymax
+                self.result_msg = ObjectDetectionResult()
+                self.result_msg.message_type = self.result_msg.RESULT
+                self.result_msg.object_found = True
+                self.result_msg.result_type = 1 # 2d bounding box
+                self.result_msg.box2d.min_x = b.xmin
+                self.result_msg.box2d.min_y = b.ymin
+                self.result_msg.box2d.max_x = b.xmax
+                self.result_msg.box2d.max_y = b.ymax
                 self.ready_to_pub = True
                 self.pub_type = "object"
                 self.requested_object = False
@@ -102,11 +106,11 @@ class RefboxClientListener(object):
 
     def send_gesture_recognition_result(self):
         print("Received gresture request")
-        self.res = GestureRecognitionResult()
-        self.res.message_type = self.res.RESULT
-        self.res.gestures = random.sample(["nodding", "pointing", "pull_hand_in_call_someone", "shaking_head", "stop_sign", "thumbs_down", "thumbs_up", "wave_someone_away", "waving_hand"], 2)
+        self.result_msg = GestureRecognitionResult()
+        self.result_msg.message_type = self.result_msg.RESULT
+        self.result_msg.gestures = random.sample(["nodding", "pointing", "pull_hand_in_call_someone", "shaking_head", "stop_sign", "thumbs_down", "thumbs_up", "wave_someone_away", "waving_hand"], 2)
         time.sleep(random.uniform(0.5,5))
-        self.publishers["gesture"].publish(self.res)
+        self.publishers["gesture"].publish(self.result_msg)
 
     def timeout_person(self):
         st = time.time()
@@ -114,10 +118,10 @@ class RefboxClientListener(object):
             if not self.requested_person:
                 return # person already found
         # waited >= 8 secs for person but not found
-        self.res = PersonDetectionResult()
-        self.res.message_type = self.res.RESULT
-        self.res.person_found = False
-        self.publishers["person"].publish(self.res)
+        self.result_msg = PersonDetectionResult()
+        self.result_msg.message_type = self.result_msg.RESULT
+        self.result_msg.person_found = False
+        self.publishers["person"].publish(self.result_msg)
         self.requested_person = False
 
     def timeout_object(self):
@@ -125,10 +129,10 @@ class RefboxClientListener(object):
         while time.time() - st < 8:
             if not self.requested_object:
                 return
-        self.res = ObjectDetectionResult()
-        self.res.message_type = self.res.RESULT
-        self.res.object_found = False
-        self.publishers["object"].publish(self.res)
+        self.result_msg = ObjectDetectionResult()
+        self.result_msg.message_type = self.result_msg.RESULT
+        self.result_msg.object_found = False
+        self.publishers["object"].publish(self.result_msg)
         self.requested_object = False
 
 if __name__ == '__main__':
