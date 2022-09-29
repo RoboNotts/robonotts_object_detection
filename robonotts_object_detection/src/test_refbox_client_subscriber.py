@@ -29,16 +29,16 @@ class RefboxClientListener(object):
         rospy.Subscriber("/darknet_ros/bounding_boxes", BoundingBoxes, self.update_bounding_boxes) # Bounding boxes from Darknet
         rospy.Subscriber("/locobot/camera/color/image_raw", Image, self.update_image) # Bucky's Camera
         self.publishers = {
-            # Set up publishers for our results.
+            #Set up publishers for our results.
             "person": rospy.Publisher("metrics_refbox_client/person_detection_result", PersonDetectionResult, queue_size=10),
             "object": rospy.Publisher("metrics_refbox_client/object_detection_result", ObjectDetectionResult, queue_size=10),
             "gesture": rospy.Publisher("metrics_refbox_client/gesture_recognition_result", GestureRecognitionResult, queue_size=10)
         }
         self.requested_person = False
         self.requested_object = False
-        rospy.spin() # Keeps the python node from terminating until it is closed by ROS
+        rospy.spin() #Keeps the python node from terminating until it is closed by ROS
     
-    #Updates the currently stored image.
+    #Publishes the current image, or updates the current image if there is not one.
     def update_image(self, msg):
         if self.ready_to_pub:
             self.result_msg.image = self.image_saved
@@ -47,10 +47,13 @@ class RefboxClientListener(object):
         else:
             self.image_saved = msg
             
+    #Takes all the bounding boxes, and formats them into the appropriate refbox message
     def update_bounding_boxes(self, msg):
         for b in msg.bounding_boxes:
+            # If we are looking for a person...
             if b.Class == "person" and b.probability >= 0.6 and self.requested_person:
-                print(f"Found a person with {b.probability} certainty")
+                print(f"Found a person with {b.probability} certainty") #Debug console statement
+                #Taking our bounding box and putting each peice of data into the right place.
                 self.result_msg = PersonDetectionResult()
                 self.result_msg.message_type = self.result_msg.RESULT
                 self.result_msg.person_found = True
@@ -61,9 +64,9 @@ class RefboxClientListener(object):
                 self.ready_to_pub = True
                 self.pub_type = "person"
                 self.requested_person = False
-                break
-            if self.requested_object and b.Class == self.search_object:
-                print(f"Found a {b.Class} with {b.probability} certainty")
+            # If we are looking for an object...
+            elif self.requested_object and b.Class == self.search_object:
+                print(f"Found a {b.Class} with {b.probability} certainty") #Debug console statement
                 self.result_msg = ObjectDetectionResult()
                 self.result_msg.message_type = self.result_msg.RESULT
                 self.result_msg.object_found = True
@@ -77,10 +80,10 @@ class RefboxClientListener(object):
                 self.requested_object = False
                 break
 
+    # Handle a refbox command
     def handle_command(self, msg):
         print("Handling command")
-        if msg.command != 1: return
-
+        if msg.command != 1: return # This means we don't need to handle it
         if msg.task == Command.OBJECT_DETECTION:
             self.search_object = json.loads(msg.task_config)["Target object"].lower()
             print(f"Searching for a {self.search_object}")
@@ -90,6 +93,7 @@ class RefboxClientListener(object):
         elif msg.task == Command.GESTURE_RECOGNITION:
             self.send_gesture_recognition_result()
 
+    # Send the result of our object detection
     def send_object_detection_result(self):
         print("Received object request")
         self.requested_object = True
@@ -97,6 +101,7 @@ class RefboxClientListener(object):
         th.start()
         th.join()
 
+    # As above for people
     def send_person_detection_result(self):
         print("Received person request")
         self.requested_person = True
@@ -104,6 +109,7 @@ class RefboxClientListener(object):
         th.start()
         th.join()
 
+    # As above for gestures
     def send_gesture_recognition_result(self):
         print("Received gresture request")
         self.result_msg = GestureRecognitionResult()
@@ -112,11 +118,13 @@ class RefboxClientListener(object):
         time.sleep(random.uniform(0.5,5))
         self.publishers["gesture"].publish(self.result_msg)
 
+    # 8 second timer for detection
     def timeout_person(self):
         st = time.time()
         while time.time() - st < 8:
             if not self.requested_person:
                 return # person already found
+
         # waited >= 8 secs for person but not found
         self.result_msg = PersonDetectionResult()
         self.result_msg.message_type = self.result_msg.RESULT
@@ -124,11 +132,14 @@ class RefboxClientListener(object):
         self.publishers["person"].publish(self.result_msg)
         self.requested_person = False
 
+    # 8 second timer for detection
     def timeout_object(self):
         st = time.time()
         while time.time() - st < 8:
             if not self.requested_object:
-                return
+                return # objects already found
+
+        #NO objects found
         self.result_msg = ObjectDetectionResult()
         self.result_msg.message_type = self.result_msg.RESULT
         self.result_msg.object_found = False
