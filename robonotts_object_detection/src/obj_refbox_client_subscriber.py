@@ -15,7 +15,6 @@ import time
 class RefboxClientListener(object):
     person_box = BoundingBox2D()
     person_prob = 0
-
     image_saved = Image()
 
     def __init__(self):

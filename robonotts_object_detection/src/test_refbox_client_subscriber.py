@@ -6,7 +6,6 @@ import metrics_refbox_msgs.msg
 from sensor_msgs.msg import Image
 import random
 from metrics_refbox_msgs.msg import Command
-from metrics_refbox_msgs.msg import Command
 from metrics_refbox_msgs.msg import ObjectDetectionResult, PersonDetectionResult, ActivityRecognitionResult
 from metrics_refbox_msgs.msg import GestureRecognitionResult, HandoverObjectResult, ReceiveObjectResult
 from metrics_refbox_msgs.msg import ClutteredPickResult, AssessActivityStateResult, ItemDeliveryResult

@@ -20,13 +20,17 @@ from metrics_refbox_msgs.msg import BoundingBox2D
 
 class MetricsBenchmarkMockup(object):
     """
+
     """
     def __init__(self):
+        
         config_file = rospy.get_param('~config_file')
         self.config_file_path = rospy.get_param('~config_file_path')
         self.sample_images_path = rospy.get_param('~sample_images_path')
         refbox_client_ns = rospy.get_param("~refbox_client_ns")
-
+        if self.refbox_command is not None:
+            if self.refbox_command.command == Command.START:
+                self.rosbag_event = None
         stream = open(os.path.join(self.config_file_path, config_file), 'r')
         self.config = json.load(stream)
 
