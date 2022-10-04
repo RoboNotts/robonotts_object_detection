@@ -10,9 +10,34 @@ from metrics_refbox_msgs.msg import ObjectDetectionResult, PersonDetectionResult
 from metrics_refbox_msgs.msg import GestureRecognitionResult, HandoverObjectResult, ReceiveObjectResult
 from metrics_refbox_msgs.msg import ClutteredPickResult, AssessActivityStateResult, ItemDeliveryResult
 from metrics_refbox_msgs.msg import BoundingBox2D
-from darknet_ros_msgs.msg import BoundingBoxes
+from drake.msg import DrakeResults
 import time
 import threading
+
+classnames = [
+    "cup",
+    "plate",
+    "bowl",
+    "towel",
+    "shoes",
+    "sponge",
+    "bottle",
+    "toothbrush",
+    "toothpaste",
+    "tray",
+    "sweater",
+    "cellphone",
+    "banana",
+    "medicine bottle",
+    "reading glasses",
+    "flashlight",
+    "pill box",
+    "book",
+    "knife",
+    "cellphone charger",
+    "shopping bag",
+    "keyboard"
+]
 
 class RefboxClientListener(object):
     person_box = BoundingBox2D()
@@ -26,7 +51,7 @@ class RefboxClientListener(object):
     def __init__(self):
         rospy.init_node('refbox_client_listener') 
         rospy.Subscriber("/metrics_refbox_client/command", metrics_refbox_msgs.msg.Command, self.handle_command) # Refbox Commands
-        rospy.Subscriber("/darknet_ros/bounding_boxes", BoundingBoxes, self.update_bounding_boxes) # Bounding boxes from Darknet
+        rospy.Subscriber("/drake/bounding_boxes", DrakeResults, self.update_bounding_boxes) # Bounding boxes from Darknet
         rospy.Subscriber("/locobot/camera/color/image_raw", Image, self.update_image) # Bucky's Camera
         self.publishers = {
             #Set up publishers for our results.
@@ -49,9 +74,9 @@ class RefboxClientListener(object):
             
     #Takes all the bounding boxes, and formats them into the appropriate refbox message
     def update_bounding_boxes(self, msg):
-        for b in msg.bounding_boxes:
+        for b in msg.results:
             # If we are looking for a person...
-            if b.Class == "person" and b.probability >= 0.6 and self.requested_person:
+            if classnames[b.object_class] == "person" and b.probability >= 0.6 and self.requested_person:
                 print(f"Found a person with {b.probability} certainty") #Debug console statement
                 #Taking our bounding box and putting each peice of data into the right place.
                 self.result_msg = PersonDetectionResult()
@@ -65,7 +90,7 @@ class RefboxClientListener(object):
                 self.pub_type = "person"
                 self.requested_person = False
             # If we are looking for an object...
-            elif self.requested_object and b.Class == self.search_object:
+            elif self.requested_object and classnames[b.object_class] == self.search_object:
                 print(f"Found a {b.Class} with {b.probability} certainty") #Debug console statement
                 self.result_msg = ObjectDetectionResult()
                 self.result_msg.message_type = self.result_msg.RESULT
