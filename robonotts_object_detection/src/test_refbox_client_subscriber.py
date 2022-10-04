@@ -103,7 +103,7 @@ class RefboxClientListener(object):
                 self.ready_to_pub = True
                 self.pub_type = "object"
                 self.requested_object = False
-                break
+                break   
 
     # Handle a refbox command
     def handle_command(self, msg):
