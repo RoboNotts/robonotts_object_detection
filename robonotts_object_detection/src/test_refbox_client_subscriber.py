@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from numpy import True_
 import rospy
 import json
 import metrics_refbox_msgs.msg
@@ -11,6 +12,7 @@ from metrics_refbox_msgs.msg import GestureRecognitionResult, HandoverObjectResu
 from metrics_refbox_msgs.msg import ClutteredPickResult, AssessActivityStateResult, ItemDeliveryResult
 from metrics_refbox_msgs.msg import BoundingBox2D
 from drake.msg import DrakeResults
+from darknet_ros_msgs.msg import BoundingBoxes
 import time
 import threading
 
@@ -39,25 +41,46 @@ classnames = [
     "keyboard"
 ]
 
+gesture_names = ["nodding", "pointing", "pull_hand_in_call_someone", "shaking_head", "stop_sign", "thumbs_down", "thumbs_up", "wave_someone_away", "waving_hand"]
+activity_names = ["Opening the door and walking in/out",
+"Putting on a jacket",
+"Touching a hot surface",
+"Opening the fridge",
+"Drinking water",
+"Colliding against something",
+"Eating food with a fork",
+"Coughing or sneezing",
+"Wiping a table",
+"Reading a book",
+"Neck roll exercise",
+"Freehand exercise",
+"Lying down",
+"Limping",
+"Talking on the phone",
+"Using a computer",
+"Falling down",
+"Brushing teeth",
+"Writing"]
+
 class RefboxClientListener(object):
     person_box = BoundingBox2D()
     result_msg = None # The message to be sent back to the refBox
     ready_to_pub = False 
     image_saved = Image() # The currently saved Image
-    object_classes = ["cup", "bowl", "bottle", "toothbrush", "book"]
-
     
     # Initialises the node, and subscribes to the needed topics
     def __init__(self):
         rospy.init_node('refbox_client_listener') 
         rospy.Subscriber("/metrics_refbox_client/command", metrics_refbox_msgs.msg.Command, self.handle_command) # Refbox Commands
-        rospy.Subscriber("/drake/bounding_boxes", DrakeResults, self.update_bounding_boxes) # Bounding boxes from Darknet
+        rospy.Subscriber("/drake/bounding_boxes", DrakeResults, self.drake_bounding_boxes) # Bounding boxes from Darknet
+        rospy.Subscriber("/darknet_ros/bounding_boxes", BoundingBoxes, self.darknet_bounding_boxes)
         rospy.Subscriber("/locobot/camera/color/image_raw", Image, self.update_image) # Bucky's Camera
         self.publishers = {
             #Set up publishers for our results.
             "person": rospy.Publisher("metrics_refbox_client/person_detection_result", PersonDetectionResult, queue_size=10),
             "object": rospy.Publisher("metrics_refbox_client/object_detection_result", ObjectDetectionResult, queue_size=10),
-            "gesture": rospy.Publisher("metrics_refbox_client/gesture_recognition_result", GestureRecognitionResult, queue_size=10)
+            "gesture": rospy.Publisher("metrics_refbox_client/gesture_recognition_result", GestureRecognitionResult, queue_size=10),
+            "activity": rospy.Publisher("metrics_refbox_client/activity_recognition_result", ActivityRecognitionResult, queue_size=10)
         }
         self.requested_person = False
         self.requested_object = False
@@ -71,27 +94,42 @@ class RefboxClientListener(object):
             self.ready_to_pub = False
         else:
             self.image_saved = msg
-            
-    #Takes all the bounding boxes, and formats them into the appropriate refbox message
-    def update_bounding_boxes(self, msg):
-        for b in msg.results:
-            # If we are looking for a person...
-            if classnames[b.object_class] == "person" and b.probability >= 0.6 and self.requested_person:
-                print(f"Found a person with {b.probability} certainty") #Debug console statement
-                #Taking our bounding box and putting each peice of data into the right place.
-                self.result_msg = PersonDetectionResult()
-                self.result_msg.message_type = self.result_msg.RESULT
-                self.result_msg.person_found = True
-                self.result_msg.box2d.min_x = b.xmin
-                self.result_msg.box2d.min_y = b.ymin
-                self.result_msg.box2d.max_x = b.xmax
-                self.result_msg.box2d.max_y = b.ymax
+    
+    def darknet_bounding_boxes(self, msg):
+        for b in msg.bounding_boxes:
+            if self.requested_object and b.probability >= 0.6 and b.Class == self.search_object:
+                print(f"found a {b.Class} with {b.probability} certainty")
+                self.res = ObjectDetectionResult()
+                self.res.message_type = self.res.RESULT
+                self.res.object_found = True
+                self.res.box2d.min_x = b.xmin
+                self.res.box2d.min_y = b.ymin
+                self.res.box2d.max_x = b.xmax
+                self.res.box2d.max_y = b.ymax
+                self.ready_to_pub = True
+                self.pub_type = "object"
+                self.requested_object = False
+                break
+            if b.Class == "person" and b.probability >= 0.6 and self.requested_person:
+                print(f"Foud a person with {b.probability} certainty")
+                self.res = PersonDetectionResult()
+                self.res.message_type = self.res.RESULT
+                self.res.person_found = True
+                self.res.box2d.min_x = b.xmin
+                self.res.box2d.min_y = b.ymin
+                self.res.box2d.max_x = b.xmax
+                self.res.box2d.max_y = b.ymax
                 self.ready_to_pub = True
                 self.pub_type = "person"
                 self.requested_person = False
+                break
+
+    #Takes all the bounding boxes, and formats them into the appropriate refbox message
+    def drake_bounding_boxes(self, msg):
+        for b in msg.results:
             # If we are looking for an object...
-            elif self.requested_object and classnames[b.object_class] == self.search_object:
-                print(f"Found a {b.Class} with {b.probability} certainty") #Debug console statement
+            if self.requested_object and classnames[b.object_class] == self.search_object:
+                print(f"Found a {classnames[b.object_class]} with {b.confidence} certainty") #Debug console statement
                 self.result_msg = ObjectDetectionResult()
                 self.result_msg.message_type = self.result_msg.RESULT
                 self.result_msg.object_found = True
@@ -117,6 +155,8 @@ class RefboxClientListener(object):
             self.send_person_detection_result()
         elif msg.task == Command.GESTURE_RECOGNITION:
             self.send_gesture_recognition_result()
+        elif msg.task == Command.ACTIVITY_RECOGNITION:
+            self.send_activity_recognition_result()
 
     # Send the result of our object detection
     def send_object_detection_result(self):
@@ -136,12 +176,20 @@ class RefboxClientListener(object):
 
     # As above for gestures
     def send_gesture_recognition_result(self):
-        print("Received gresture request")
+        print("Received gesture request")
         self.result_msg = GestureRecognitionResult()
         self.result_msg.message_type = self.result_msg.RESULT
-        self.result_msg.gestures = random.sample(["nodding", "pointing", "pull_hand_in_call_someone", "shaking_head", "stop_sign", "thumbs_down", "thumbs_up", "wave_someone_away", "waving_hand"], 2)
+        self.result_msg.gestures = random.sample(gesture_names, 2)
         time.sleep(random.uniform(0.5,5))
         self.publishers["gesture"].publish(self.result_msg)
+
+    def send_activity_recognition_result(self):
+        print("Received activity request")
+        self.result_msg = ActivityRecognitionResult()
+        self.result_msg.message_type = self.result_msg.RESULT
+        self.result_msg.activities = random.sample(activity_names, 2)
+        time.sleep(random.uniform(0.5,5))
+        self.publishers["activity"].publish(self.result_msg)
 
     # 8 second timer for detection
     def timeout_person(self):
