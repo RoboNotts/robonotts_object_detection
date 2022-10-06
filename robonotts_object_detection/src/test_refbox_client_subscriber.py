@@ -40,7 +40,6 @@ classnames = [
     "shopping bag",
     "keyboard"
 ]
-
 gesture_names = ["nodding", "pointing", "pull_hand_in_call_someone", "shaking_head", "stop_sign", "thumbs_down", "thumbs_up", "wave_someone_away", "waving_hand"]
 activity_names = ["Opening the door and walking in/out",
 "Putting on a jacket",
@@ -61,12 +60,15 @@ activity_names = ["Opening the door and walking in/out",
 "Falling down",
 "Brushing teeth",
 "Writing"]
+darknetonly = ["cup", "bowl", "bottle", "toothbrush", "book"]
 
 class RefboxClientListener(object):
     person_box = BoundingBox2D()
     result_msg = None # The message to be sent back to the refBox
     ready_to_pub = False 
     image_saved = Image() # The currently saved Image
+    inH = 0
+    inW = 0
     
     # Initialises the node, and subscribes to the needed topics
     def __init__(self):
@@ -86,39 +88,52 @@ class RefboxClientListener(object):
         self.requested_object = False
         rospy.spin() #Keeps the python node from terminating until it is closed by ROS
     
+    def normalize_points(self, dimensions, xmin, ymin, xmax, ymax):
+        h, w = dimensions
+        print(f"Normalising with {dimensions}")
+        normH = h / 360 # Dimensions of image in drake model is 360x480
+        normW = w / 480
+
+        return([int(coord) for coord in [xmin * normW, ymin * normH, xmax * normW, ymax * normH]])
+
     #Publishes the current image, or updates the current image if there is not one.
     def update_image(self, msg):
+        #print(f"Getting image, readyto pub: {self.ready_to_pub}")
         if self.ready_to_pub:
             self.result_msg.image = self.image_saved
             self.publishers[self.pub_type].publish(self.result_msg)
             self.ready_to_pub = False
         else:
             self.image_saved = msg
+            self.inH = msg.height
+            self.inW = msg.width
     
     def darknet_bounding_boxes(self, msg):
         for b in msg.bounding_boxes:
-            if self.requested_object and b.probability >= 0.6 and b.Class == self.search_object:
+            if self.requested_object and b.probability >= 0.3 and b.Class == self.search_object:
                 print(f"found a {b.Class} with {b.probability} certainty")
-                self.res = ObjectDetectionResult()
-                self.res.message_type = self.res.RESULT
-                self.res.object_found = True
-                self.res.box2d.min_x = b.xmin
-                self.res.box2d.min_y = b.ymin
-                self.res.box2d.max_x = b.xmax
-                self.res.box2d.max_y = b.ymax
+                self.result_msg = ObjectDetectionResult()
+                self.result_msg.message_type = self.result_msg.RESULT
+                self.result_msg.object_found = True
+                self.result_msg.result_type = 1 # 2d bounding box
+                self.result_msg.box2d.min_x = b.xmin
+                self.result_msg.box2d.min_y = b.ymin
+                self.result_msg.box2d.max_x = b.xmax
+                self.result_msg.box2d.max_y = b.ymax
                 self.ready_to_pub = True
                 self.pub_type = "object"
                 self.requested_object = False
                 break
             if b.Class == "person" and b.probability >= 0.6 and self.requested_person:
                 print(f"Foud a person with {b.probability} certainty")
-                self.res = PersonDetectionResult()
-                self.res.message_type = self.res.RESULT
-                self.res.person_found = True
-                self.res.box2d.min_x = b.xmin
-                self.res.box2d.min_y = b.ymin
-                self.res.box2d.max_x = b.xmax
-                self.res.box2d.max_y = b.ymax
+                self.result_msg = PersonDetectionResult()
+                self.result_msg.message_type = self.result_msg.RESULT
+                self.result_msg.person_found = True
+                self.result_msg.result_type = 1 # 2d bounding box
+                self.result_msg.box2d.min_x = b.xmin
+                self.result_msg.box2d.min_y = b.ymin
+                self.result_msg.box2d.max_x = b.xmax
+                self.result_msg.box2d.max_y = b.ymax + (b.ymax - b.ymin)
                 self.ready_to_pub = True
                 self.pub_type = "person"
                 self.requested_person = False
@@ -128,16 +143,18 @@ class RefboxClientListener(object):
     def drake_bounding_boxes(self, msg):
         for b in msg.results:
             # If we are looking for an object...
-            if self.requested_object and classnames[b.object_class] == self.search_object:
+            if self.requested_object and self.search_object not in darknetonly and classnames[b.object_class] == self.search_object:
                 print(f"Found a {classnames[b.object_class]} with {b.confidence} certainty") #Debug console statement
+                coordinates = self.normalize_points((self.inH, self.inW), b.xmin, b.ymin, b.xmax, b.ymax)
+                print(f"Foud at {coordinates}")
                 self.result_msg = ObjectDetectionResult()
                 self.result_msg.message_type = self.result_msg.RESULT
                 self.result_msg.object_found = True
                 self.result_msg.result_type = 1 # 2d bounding box
-                self.result_msg.box2d.min_x = b.xmin
-                self.result_msg.box2d.min_y = b.ymin
-                self.result_msg.box2d.max_x = b.xmax
-                self.result_msg.box2d.max_y = b.ymax
+                self.result_msg.box2d.min_x = coordinates[0]
+                self.result_msg.box2d.min_y = coordinates[1]
+                self.result_msg.box2d.max_x = coordinates[2]
+                self.result_msg.box2d.max_y = coordinates[3]
                 self.ready_to_pub = True
                 self.pub_type = "object"
                 self.requested_object = False
@@ -202,6 +219,7 @@ class RefboxClientListener(object):
         self.result_msg = PersonDetectionResult()
         self.result_msg.message_type = self.result_msg.RESULT
         self.result_msg.person_found = False
+        self.result_msg.image = self.image_saved
         self.publishers["person"].publish(self.result_msg)
         self.requested_person = False
 
@@ -216,10 +234,9 @@ class RefboxClientListener(object):
         self.result_msg = ObjectDetectionResult()
         self.result_msg.message_type = self.result_msg.RESULT
         self.result_msg.object_found = False
+        self.result_msg.image = self.image_saved
         self.publishers["object"].publish(self.result_msg)
         self.requested_object = False
 
 if __name__ == '__main__':
     client = RefboxClientListener()
-
-
