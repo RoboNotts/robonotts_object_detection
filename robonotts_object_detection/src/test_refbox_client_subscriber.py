@@ -143,7 +143,9 @@ class RefboxClientListener(object):
     def drake_bounding_boxes(self, msg):
         for b in msg.results:
             # If we are looking for an object...
-            if self.requested_object and self.search_object not in darknetonly and classnames[b.object_class] == self.search_object:
+            if self.requested_object and classnames[b.object_class] == self.search_object:
+                if (self.search_object in darknetonly and b.confidence < 0.44):
+                    break
                 print(f"Found a {classnames[b.object_class]} with {b.confidence} certainty") #Debug console statement
                 coordinates = self.normalize_points((self.inH, self.inW), b.xmin, b.ymin, b.xmax, b.ymax)
                 print(f"Foud at {coordinates}")
