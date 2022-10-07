@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+from pyexpat.errors import messages
 from numpy import True_
 import rospy
 import json
@@ -13,6 +13,7 @@ from metrics_refbox_msgs.msg import ClutteredPickResult, AssessActivityStateResu
 from metrics_refbox_msgs.msg import BoundingBox2D
 from drake.msg import DrakeResults
 from darknet_ros_msgs.msg import BoundingBoxes
+from bocelli.msg import SpeechRequest, ListenRequest, ListenResult
 import time
 import threading
 
@@ -69,7 +70,8 @@ class RefboxClientListener(object):
     image_saved = Image() # The currently saved Image
     inH = 0
     inW = 0
-    
+    msg = None
+
     # Initialises the node, and subscribes to the needed topics
     def __init__(self):
         rospy.init_node('refbox_client_listener') 
@@ -77,12 +79,16 @@ class RefboxClientListener(object):
         rospy.Subscriber("/drake/bounding_boxes", DrakeResults, self.drake_bounding_boxes) # Bounding boxes from Darknet
         rospy.Subscriber("/darknet_ros/bounding_boxes", BoundingBoxes, self.darknet_bounding_boxes)
         rospy.Subscriber("/locobot/camera/color/image_raw", Image, self.update_image) # Bucky's Camera
+        rospy.Subscriber("bocelli/hear", ListenResult , self.returned_speech)
         self.publishers = {
             #Set up publishers for our results.
             "person": rospy.Publisher("metrics_refbox_client/person_detection_result", PersonDetectionResult, queue_size=10),
             "object": rospy.Publisher("metrics_refbox_client/object_detection_result", ObjectDetectionResult, queue_size=10),
             "gesture": rospy.Publisher("metrics_refbox_client/gesture_recognition_result", GestureRecognitionResult, queue_size=10),
-            "activity": rospy.Publisher("metrics_refbox_client/activity_recognition_result", ActivityRecognitionResult, queue_size=10)
+            "activity": rospy.Publisher("metrics_refbox_client/activity_recognition_result", ActivityRecognitionResult, queue_size=10),
+            "assess_activity_state": rospy.Publisher("metrics_refbox_client/assess_activity_state", AssessActivityStateResult, queue_size=10),
+            "speak": rospy.Publisher("bocelli/speak", SpeechRequest ,queue_size=10),
+            "listen": rospy.Publisher("bocelli/requestListen", ListenRequest ,queue_size=10)
         }
         self.requested_person = False
         self.requested_object = False
@@ -124,16 +130,15 @@ class RefboxClientListener(object):
                 self.pub_type = "object"
                 self.requested_object = False
                 break
-            if b.Class == "person" and b.probability >= 0.6 and self.requested_person:
-                print(f"Foud a person with {b.probability} certainty")
+            if b.Class == "person" and b.probability >= 0.45 and self.requested_person:
+                print(f"Found a person with {b.probability} certainty")
                 self.result_msg = PersonDetectionResult()
                 self.result_msg.message_type = self.result_msg.RESULT
                 self.result_msg.person_found = True
-                self.result_msg.result_type = 1 # 2d bounding box
                 self.result_msg.box2d.min_x = b.xmin
                 self.result_msg.box2d.min_y = b.ymin
                 self.result_msg.box2d.max_x = b.xmax
-                self.result_msg.box2d.max_y = b.ymax + (b.ymax - b.ymin)
+                self.result_msg.box2d.max_y = b.ymax
                 self.ready_to_pub = True
                 self.pub_type = "person"
                 self.requested_person = False
@@ -148,7 +153,7 @@ class RefboxClientListener(object):
                     break
                 print(f"Found a {classnames[b.object_class]} with {b.confidence} certainty") #Debug console statement
                 coordinates = self.normalize_points((self.inH, self.inW), b.xmin, b.ymin, b.xmax, b.ymax)
-                print(f"Foud at {coordinates}")
+                print(f"Found at {coordinates}")
                 self.result_msg = ObjectDetectionResult()
                 self.result_msg.message_type = self.result_msg.RESULT
                 self.result_msg.object_found = True
@@ -164,7 +169,9 @@ class RefboxClientListener(object):
 
     # Handle a refbox command
     def handle_command(self, msg):
+        self.msg = msg
         print("Handling command")
+        time.sleep(0.8)
         if msg.command != 1: return # This means we don't need to handle it
         if msg.task == Command.OBJECT_DETECTION:
             self.search_object = json.loads(msg.task_config)["Target object"].lower()
@@ -176,7 +183,54 @@ class RefboxClientListener(object):
             self.send_gesture_recognition_result()
         elif msg.task == Command.ACTIVITY_RECOGNITION:
             self.send_activity_recognition_result()
+        elif msg.task == Command.ASSESS_ACTIVITY_STATE:
+            self.send_assess_activity_state_result()
 
+    # Send the result of our object detection
+    def send_assess_activity_state_result(self):
+        print("Received assess activity state request")
+        input("Press enter once in place...")
+        
+        self.requested_person = True
+        
+        # st = time.time()
+        # while time.time() - st < 8:
+        #     if not self.requested_person:
+        #         return # person already found
+
+        time.sleep(1)
+        print("Sending Face")
+        # waited >= 8 secs for person but not found
+        self.pub_type = "assess_activity_state"
+        self.result_msg = AssessActivityStateResult()
+        self.result_msg.image = self.image_saved
+        self.result_msg.phase = AssessActivityStateResult.PHASE_DETECTION
+        self.result_msg.message_type = self.result_msg.FEEDBACK
+        self.result_msg.box2d = self.person_box
+        self.ready_to_pub = True
+        time.sleep(1)
+        print("Sending Ting")
+        self.result_msg.activities = [input("What you up to homeslice? >")]
+        self.result_msg.phase = AssessActivityStateResult.PHASE_VISUAL_ASSESSMENT
+        print("")
+        self.ready_to_pub = True
+
+        # Insert Speak
+        print("Speaking")
+        message = SpeechRequest()
+        message.result = "Hello There, I can't quite see what you are doing. Please tell me what you are doing."      
+        self.publishers["speak"].publish(message)
+        message = ListenRequest()
+        message.duration = 3
+        self.rospy.Publisher["listen"].publish(message)
+        
+    def returned_speech(self, msg):
+
+        self.result_msg.phase = AssessActivityStateResult.PHASE_VERBAL_ASSESSMENT
+        self.result_msg.message_type = self.result_msg.RESULT
+        self.result_msg.activities = [msg.result]
+        self.ready_to_pub = True
+        
     # Send the result of our object detection
     def send_object_detection_result(self):
         print("Received object request")
